@@ -5,7 +5,7 @@ date: "2024-10-11"
 ---
 
 # Project Overview
-
+Test
 The files `Kern_fallowing_time_series.Rmd` and `Kern_fallowing_extract.Rmd` (run in succession) will read in shapefiles provided by California’s Department of Conservation Farmland Mapping & Monitoring Program (FMMP) and the Enhanced Historical Land-Use and Land-Cover Data sets from the USGS, called GIRAS.
 
 Each shapefile will have its CRS and extents matched, and be converted into raster files, where cells are populated by the year when that cell is registered as agriculture in the shapefile data. These rasters are stacked and some basic calculations are performed to see the first and last year each cell has had agriculture, as well as the number of times a certain cell has transitioned to agriculture, as well as had agriculture. These values are then extracted to the 1990 CDWR fields shapefile Kern1990_CDWR_with_FMMP_GIRAS.shp, which is the final result.
