@@ -1,0 +1,98 @@
+---
+title: "Kern County Fallowing Analysis"
+author: "James Cunningham"
+date: "2024-10-11"
+---
+
+# Project Overview
+
+The files `Kern_fallowing_time_series.Rmd` and `Kern_fallowing_extract.Rmd` (run in succession) will read in shapefiles provided by California’s Department of Conservation Farmland Mapping & Monitoring Program (FMMP) and the Enhanced Historical Land-Use and Land-Cover Data sets from the USGS, called GIRAS.
+
+Each shapefile will have its CRS and extents matched, and be converted into raster files, where cells are populated by the year when that cell is registered as agriculture in the shapefile data. These rasters are stacked and some basic calculations are performed to see the first and last year each cell has had agriculture, as well as the number of times a certain cell has transitioned to agriculture, as well as had agriculture. These values are then extracted to the 1990 CDWR fields shapefile Kern1990_CDWR_with_FMMP_GIRAS.shp, which is the final result.
+
+- **FMMP files** cover years 1988 to 2020, every two years.
+- **GIRAS file** represents land use from 1970-1985.
+
+## Data Sources:
+
+- [California Department of Conservation Farmland Mapping & Monitoring Program (FMMP)](https://www.conservation.ca.gov/dlrp/fmmp)
+- [USGS GIRAS Land-Use and Land-Cover Data](https://pubs.usgs.gov/ds/2006/240/)
+
+# File Structure
+
+Kern_Abandoned/
+├── data/
+│   ├── raw/
+│   │   ├── GIRAS/                  # GIRAS shapefiles (1970-1985)
+│   │   ├── FMMP/                   # FMMP shapefiles (1988-2020)
+│   │   └── i15_LandUse_Kern1990/   # 1990 CDWR shapefile
+│   ├── processed/                  # Processed raster files from time series
+│   └── intermediate/               # Intermediate files (shapefiles, raster stacks)
+├── Kern_fallowing_time_series.Rmd   # Script to generate time series rasters
+├── Kern_fallowing_extract.Rmd       # Script to extract raster values into shapefiles
+└── Readme.Rmd                       # This README file
+
+
+# Column Descriptions in the updated CDWR Shapefile
+
+After running the `Kern_fallowing_extract.Rmd` script, the following new columns will be added to the CDWR fields shapefile:
+
+- **`frstyc`:** _"first year cropped"_  
+  The mode of the **minimum year** raster for each polygon. This represents the earliest year that agricultural activity was recorded in the time series.
+
+- **`lastyc`:** _"last year cropped"_  
+  The mode of the **maximum year** raster for each polygon. This represents the latest year that agricultural activity was recorded in the time series. Note: if "2020" this does not indicate any instance of fallowing this is the max year in the timeseries. 
+
+- **`falevt`:** _"fallowing events"_  
+  The mode of the **transition count** raster for each polygon. This value represents how many times the land transitioned away from agriculture (i.e., from agriculture to non-agricultural use).
+
+- **`totyc`:** _"total years cropped"_  
+  The mode of the **agriculture count** raster for each polygon. This indicates the number of files agricultural activity was observed in the land over the analyzed period.
+
+
+
+# FMMP/USGS metadata
+
+#Giras
+
+# The first digit represents the level 1 land-use and land-cover code, and the second digit (ones place) represents a subdivision, or level 2 code. The Anderson Level II land use codes used in this data set are listed below: 
+
+#   > > 1 Urban or built-up land > > 11 Residental > 12 Commercial and services > 13 Industrial > 14 Transportation, communication, utilities > 15 Industrial and commercial complexes > 16 Mixed urban or built-up land > 17 Other urban or built-up land 
+
+# > > 2 Agricultural land > > 21 Cropland and pasture > 22 Orchards, groves, vineyards, nurseries, and ornamental horticultural > 23 Confined feeding operations > 24 Other agricultural land 
+
+# > > 3 Rangeland > > 31 Herbaceous rangeland > 32 Shrub and brush rangeland > 33 Mixed rangeland
+
+# > > 4 Forest land > > 41 Deciduous forest land > 42 Evergreen forest land > 43 Mixed forest land
+
+# > > 5 Water > > 51 Streams and canals > 52 Lakes > 53 Reservoirs > 54 Bays and estuaries
+
+# > > 6 Wetland > > 61 Forested wetland > 62 Nonforested wetland 
+
+# > > 7 Barren land > > 71 Dry salt flats > 72 Beaches > 73 Sandy areas not beaches > 74 Bare exposed rock > 75 Strip mines, quarries, gravel pits > 76 Transitional areas > 77 Mixed Barren Land 
+
+# > > 8 Tundra > > 81 Shrub and brush tundra > 82 Herbaceous tundra > 83 Bare ground > 84 Wet tundra > 85 Mixed tundra 
+
+# > > 9 Perennial snow or ice > > 91 Perennial snowfields > 92 Glaciers
+
+#FMMP
+
+# Farmland:
+# P: Prime Farmland
+# U: Unique farmland
+# L: Farmland of local importance
+# S: Farmland of statewide importance
+# I: Irrigated farmland (Note: category dropped in 2004)
+# N: Non-irrigated farmland (Note: category dropped in 2004)
+
+# Not farmland:
+# Cl: Confined Animal Agriculture
+# D: Urban and built up land
+# G: Grazing land
+# nv: Nonagricultural and Natural Vegetation
+# R: Rural Residential
+# sAC: Semi-Agricultural and Rural Commercial Land
+# V: Vacant or disturbed
+# W: Water
+# X: Other land, Typical uses include low density rural development, heavily forested land, mined land, or government land with restrictions on use
+

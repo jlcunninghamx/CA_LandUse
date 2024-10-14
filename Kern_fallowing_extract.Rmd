@@ -1,0 +1,114 @@
+---
+title: "Kern_fallowing_extract"
+author: "James Cunningham"
+date: "2024-10-11"
+output: html_document
+---
+
+# Introduction
+
+This second script reads raster files (first year cropped, last year cropped, transition count, agriculture count) and extracts values (using a mode calculation) to populate the fields of the 1990 CDWR shapefile for Kern County, CA.
+
+The extraction matches the CRS from the .tif files to CDWR, then replaces NA values with -9999 and does a mode calculation such that a field is populated by the most present pixel value under it. 
+
+
+# Setup
+
+```{r setup, include=FALSE}
+
+# Automatically install required packages if not already installed
+required_packages <- c("terra", "sf", "dplyr", "here")
+for(pkg in required_packages) {
+  if(!require(pkg, character.only = TRUE)) {
+    install.packages(pkg, dependencies = TRUE)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+# Load necessary libraries
+library(terra)
+library(sf)
+library(dplyr)
+library(here)
+```
+
+# Extraction
+
+```{r}
+
+# Define file paths using here()
+raster_max_path <- here("data", "processed", "raster_max_Kern_1985_2020.tif")
+transition_count_path <- here("data", "processed", "transition_count_Kern_1985_2020.tif")
+ag_count_path <- here("data", "processed", "ag_count_Kern_1985_2020.tif")
+min_year_path <- here("data", "processed", "raster_min_Kern_1985_2020.tif")
+
+shapefile_path <- here("data", "raw", "i15_LandUse_Kern1990", "i15_LandUse_Kern1990.shp")
+
+# Load the rasters
+raster_max <- rast(raster_max_path)
+transition_count_raster <- rast(transition_count_path)
+ag_count_raster <- rast(ag_count_path)
+min_year_raster <- rast(min_year_path)
+
+# Load the shapefile
+cdwr_fields <- st_read(shapefile_path)
+
+# Ensure all rasters match the CRS and extent of the CDWR shapefile
+raster_crs <- st_crs(cdwr_fields)
+
+if (crs(raster_max) != raster_crs) {
+  raster_max <- project(raster_max, raster_crs$proj4string)
+}
+
+if (crs(transition_count_raster) != raster_crs) {
+  transition_count_raster <- project(transition_count_raster, raster_crs$proj4string)
+}
+
+if (crs(ag_count_raster) != raster_crs) {
+  ag_count_raster <- project(ag_count_raster, raster_crs$proj4string)
+}
+
+if (crs(min_year_raster) != raster_crs) {
+  min_year_raster <- project(min_year_raster, raster_crs$proj4string)
+}
+
+# Replace NA values with -9999 in each raster
+# This allows the mode calculation to return a value of -9999 where non-majority agriculture
+# land cover is not recorded under a CDWR polygon
+# This helps distinguish areas with no data from those with valid agricultural records under a CDWR polygon
+# Note: ifel is like ifelse, but the Terra version optimized for rasters
+raster_max <- ifel(is.na(raster_max), -9999, raster_max)
+transition_count_raster <- ifel(is.na(transition_count_raster), -9999, transition_count_raster)
+ag_count_raster <- ifel(is.na(ag_count_raster), -9999, ag_count_raster)
+min_year_raster <- ifel(is.na(min_year_raster), -9999, min_year_raster)
+
+# Define a function to calculate the mode, handling NA values
+# This function will be used in the extract() function to to compute the most common raster value
+# for each CDWR polygon.
+calculate_mode <- function(x) {
+  x <- na.omit(x)  # Remove NA values
+  ux <- unique(x)  # Get the unique raster cell values in the area of a polygon (vector x)
+  if (length(ux) == 0) {
+    return(NA)  # Return NA if all values are NA
+  } else {
+    # Count the occurrences of each unique value in x, and return the most frequent one
+    mode_value <- ux[which.max(tabulate(match(x, ux)))]
+    return(as.integer(mode_value))  # Return the mode as an integer
+  }
+}
+
+# Extract raster values and calculate mode for each polygon in the CDWR shapefile
+# Applies the 'calculate_mode()' function to summarize the most frequent value for each polygon
+# The resulting mode values are stored in new fields in the 'cdwr_fields' shapefile
+cdwr_fields$falevt <- extract(transition_count_raster, vect(cdwr_fields), fun = calculate_mode)[, 2]
+cdwr_fields$totyc <- extract(ag_count_raster, vect(cdwr_fields), fun = calculate_mode)[, 2]
+cdwr_fields$frstyc <- extract(min_year_raster, vect(cdwr_fields), fun = calculate_mode)[, 2]
+cdwr_fields$lastyc <- extract(raster_max, vect(cdwr_fields), fun = calculate_mode)[, 2]
+
+# Save the updated shapefile
+output_path <- here("data", "processed", "Kern1990_CDWR_with_FMMP_GIRAS.shp")
+st_write(cdwr_fields, output_path, delete_layer = TRUE)
+
+```
+
+

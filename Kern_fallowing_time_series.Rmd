@@ -1,0 +1,283 @@
+---
+title: "Kern_fallowing_time_series"
+author: "James Cunningham"
+date: "2024-10-11"
+output: html_document
+---
+
+# Introduction
+
+This script generates a series of raster .tif files that summarize agricultural activity in Kern County, CA over time (1985–2020) using land cover data sourced from FMMP and USGS. 
+
+Output Rasters:
+Last year cropped: raster_max_Kern_1985_2020.tif
+Earliest year cropped: raster_min_Kern_1985_2020.tif
+Agriculture occurrence count: ag_count_Kern_1985_2020.tif
+Transitions away from agriculture: transition_count_1985_2020.tif
+
+Stored Paths: These raster files are saved in the processed folder for use in the second script Kern_fallowing_extract.Rmd
+
+Second Script (Kern_fallowing_extract.Rmd): Reads raster files and extracts values (using a mode calculation) to populate the fields of the 1990 CDWR shapefile.
+
+```{r setup, include=FALSE}
+
+# Automatically install required packages if not already installed
+required_packages <- c("terra", "sf", "dplyr", "here")
+for(pkg in required_packages) {
+  if(!require(pkg, character.only = TRUE)) {
+    install.packages(pkg, dependencies = TRUE)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+# Load needed libraries
+library(terra)
+library(dplyr)
+library(sf)
+library(here)
+
+# Initialize an empty vector to store raster paths
+raster_paths <- c()
+```
+
+
+# Part 1: Rasterize the GIRAS (1970-1985) land cover data
+
+```{r}
+
+# Read in shapefiles
+g35120 <- st_read(here("data", "raw", "GIRAS", "g35120.shp"))
+g35118 <- st_read(here("data", "raw", "GIRAS", "g35118.shp"))
+g35116 <- st_read(here("data", "raw", "GIRAS", "g35116.shp"))
+g34118 <- st_read(here("data", "raw", "GIRAS", "g34118.shp"))
+g34116 <- st_read(here("data", "raw", "GIRAS", "g34116.shp"))
+g33120 <- st_read(here("data", "raw", "GIRAS", "g33120.shp"))
+g33118 <- st_read(here("data", "raw", "GIRAS", "g33118.shp"))
+g33116 <- st_read(here("data", "raw", "GIRAS", "g33116.shp"))
+
+# Combine shapefiles
+combined_shape <- rbind(g35120, g35118, g35116, g34118, g34116, g33120, g33118, g33116)
+
+# Write it to disk
+st_write(combined_shape, here("data", "intermediate", "combined_shapefile.shp"), append=FALSE)
+
+# Transform to EPSG 3309 (to match FMMP default CRS)
+combined_shape_transformed <- st_transform(combined_shape, 3309)
+
+# Read in FMMP Kern County file to clip, allows FMMP rasters to overlap
+kern1988_clip <- st_read(here("data", "raw", "FMMP", "kern1988.shp"))
+
+# Perform the intersection, which finds the overlapping area between GIRAS and FMMP
+clipped_shape <- st_intersection(combined_shape_transformed, kern1988_clip)
+
+# Filter to retain only attributes from GIRAS file, as second part of clip
+clipped_shape <- clipped_shape[, names(combined_shape_transformed)]
+
+# Write out the clipped GIRAS shapefile
+st_write(clipped_shape, here("data", "intermediate", "giras_kern1985.shp"), append=FALSE)
+
+# Transform the shapefile to EPSG:26941
+kern_1985_transformed <- st_transform(clipped_shape, 26941)
+
+# Reclassify polygons, wherever crops exist assign that polygon the year value, GIRAS is 1985, see Readme for more info
+kern_1985_reclassified <- kern_1985_transformed %>%
+  mutate(year_cropped = case_when(
+    LUCODE %in% c(21, 22, 24) ~ 1985,
+    LUCODE %in% c(11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 31, 32, 33, 41, 42, 
+                  43, 51, 52, 53, 61, 62, 71, 73, 74, 75, 76, 77) ~ NA_integer_,
+    TRUE ~ NA_integer_
+  ))
+
+# Define extent, values are from FMMP Kern shapefiles
+xmin = 2163844.24083589
+xmax = 2401524.24083589
+ymin = -593.637201080564
+ymax = 116706.8484412
+
+ext <- ext(xmin, xmax, ymin, ymax)
+
+# Rasterize, since units are meters in the Projected CRS EPSG: 26941, res=10 means 10m resolution
+rast_template <- rast(ext, res=10)
+rasterized_1985 <- rasterize(kern_1985_reclassified, rast_template, field="year_cropped")
+
+# Manually set CRS of raster output
+crs(rasterized_1985) <- "EPSG:26941"
+
+# Write out the 1985 raster
+output_path <- here("data", "intermediate", "rasterized_1985.tif")
+writeRaster(rasterized_1985, output_path, overwrite=TRUE)
+
+# Store the raster output path
+raster_paths <- c(raster_paths, output_path)
+
+```
+
+
+# Part 2: Rasterize 1988-2020 FMMP shapefiles
+
+```{r}
+
+
+# Listing the years of Kern data
+years <- c(1988, 1990, 1992, 1994, 1996, 1998, 2000, 2002, 2004, 2006, 2008, 2010, 2012, 2014, 2016, 2018, 2020)
+
+# Loop over each year
+for(year in years) {
+  
+  # Construct shapefile path
+  shapefile_path <- here("data", "raw", "FMMP", paste0("kern", year, ".shp"))
+  
+  # Read the shapefile
+  polygon_sf <- st_read(shapefile_path)
+  
+  # Check the year to assign and then transform the CRS
+  if(year <= 2012) {
+    st_crs(polygon_sf) <- 3309  # Set the CRS for years 1988-2012, note: FMMP metadata indicates 3309 for these years
+  } else {
+    st_crs(polygon_sf) <- 3310  # Set the CRS for years 2014-2020, note: FMMP metadata indicates 3309 for these years
+  }
+  
+  # Transform the shapefile to EPSG:26941
+  polygon_sf_transformed <- st_transform(polygon_sf, 26941)
+  
+  # Reclassify polygons, wherever crops exist assign that polygon the year value
+  polygon_sf_reclassified <- polygon_sf_transformed %>%
+    mutate(year_cropped = case_when(
+      polygon_ty %in% c('P', 'U', 'L', 'S', 'I', 'N') ~ year,
+      polygon_ty %in% c('Cl', 'D', 'G', 'nv', 'R', 'sAC', 'V', 'W', 'X') ~ NA_integer_,
+      TRUE ~ NA_integer_
+    ))
+  
+  # Define extent, this is to be inclusive of the range of extents for each shapefile
+  xmin = 2163844.24083589
+  xmax = 2401524.24083589
+  ymin = -593.637201080564
+  ymax = 116706.8484412
+  
+  ext <- ext(xmin, xmax, ymin, ymax)
+  
+  # Rasterize, since units are meters in the Projected CRS EPSG: 26941, res=10 means 10m resolution
+  rast_template <- rast(ext, res=10)
+  rasterized <- rasterize(polygon_sf_reclassified, rast_template, field="year_cropped")
+  
+  # Manually set CRS of raster output
+  crs(rasterized) <- "EPSG:26941"
+  
+  # Write out the raster using here()
+  output_path <- here("data", "intermediate", paste0("rasterized_", year, ".tif"))
+  writeRaster(rasterized, output_path, overwrite=TRUE)
+  
+  # Store the raster output path
+  raster_paths <- c(raster_paths, output_path)
+  
+}
+
+```
+
+
+# Part 3: Raster Algebra setup
+
+```{r}
+
+
+# Read all rasters into a multi-layer SpatRaster
+raster_stack <- rast(raster_paths)
+
+# Check if all rasters are loaded correctly, should be 18, 17 FMMP, 1 GIRAS
+print(nlyr(raster_stack))
+
+# Save as R object to use in other scripts if needed
+saveRDS(raster_stack, file = here("data", "intermediate", "raster_stack.rds"))
+
+```
+
+# Raster Calculations
+
+```{r}
+### Max raster ###
+
+# Calculate max for each cell across the stack
+max_raster <- app(raster_stack, fun = max, na.rm = TRUE)
+
+# Check unique values, making sure you see an assortment of years
+print(unique(values(max_raster)))
+
+# Write the max raster to disk using here()
+writeRaster(max_raster, here("data", "processed", "raster_max_Kern_1985_2020.tif"), overwrite=TRUE)
+
+```
+
+
+```{r}
+### Min raster ###
+
+# Calculate min for each cell across the stack
+min_raster <- app(raster_stack, fun = min, na.rm = TRUE)
+
+# Check unique values, making sure you see an assortment of years
+print(unique(values(min_raster)))
+
+# Write the min raster to disk using here()
+writeRaster(min_raster, here("data", "processed", "raster_min_Kern_1985_2020.tif"), overwrite=TRUE)
+
+```
+
+```{r}
+### How many times has each cell had ag?
+
+# Function to count non-NA values (i.e., agriculture occurrences)
+count_agriculture <- function(x) {
+  sum(!is.na(x))
+}
+
+# Apply this function across the stack
+agriculture_count_raster <- app(raster_stack, count_agriculture)
+
+# Replace cells with 0 count with NA
+agriculture_count_raster[agriculture_count_raster == 0] <- NA
+
+# Set the CRS of the output raster
+crs(agriculture_count_raster) <- "EPSG:26941"
+
+# Save the output raster
+writeRaster(agriculture_count_raster, here("data", "processed", "ag_count_Kern_1985_2020.tif"), overwrite=TRUE)
+
+
+```
+
+
+```{r}
+### How many times has the cell transitioned away from ag? ###
+
+# Note: The years in raster_stack need to go from oldest to newest for this to work.
+
+# Function to count transitions from agriculture to non-agriculture across raster stack, so comparing individual cells across time.
+count_transitions <- function(cell_values) {
+  # Initialize counter for transitions
+  transitions <- 0
+  
+  # Loop through each cell value to compare with the next value (ex.1988 with 1990)
+  for (i in 1:(length(cell_values) - 1)) {
+    # Check if the current cell value is not NA (indicates it is year indicating agriculture) 
+    # followed by NA (indicating no agriculture), this is counted as a transition away from ag
+    # If true, the transitions counter increased by 1
+    if (!is.na(cell_values[i]) && is.na(cell_values[i + 1])) {
+      transitions <- transitions + 1
+    }
+  }
+  # Cell values are the total number of tranistions for that cell
+  return(transitions)
+}
+
+# Apply the function across the stack
+transition_count_raster <- app(raster_stack, count_transitions)
+
+# Set the CRS of the output raster
+crs(transition_count_raster) <- "EPSG:26941"
+
+# Save the output raster
+writeRaster(transition_count_raster, here("data", "processed", "transition_count_Kern_1985_2020.tif"), overwrite=TRUE)
+
+```
+
+
